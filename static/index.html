@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Machine Live Dashboard — UI Preview</title>
+  <link rel="stylesheet" href="static.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="brand-icon">M</div>
+        <div>
+          <h1>Machine Live Dashboard</h1>
+          <p>Factory floor visibility</p>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <span class="live-pill"><span class="live-dot"></span> Live</span>
+        <span class="sync-time" id="sync-time">Updated: —</span>
+        <button class="btn btn-ghost" type="button">↻ Refresh All</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="page">
+    <div class="static-banner">UI Preview with your machine photos — mock data only</div>
+
+    <div class="kpi-strip" id="kpi-strip"></div>
+
+    <div class="toolbar">
+      <div class="search-box">
+        <span>🔍</span>
+        <input type="search" id="search" placeholder="Search machine…" autocomplete="off">
+      </div>
+      <div class="filter-chips" id="group-chips"></div>
+    </div>
+
+    <div class="machine-grid" id="machine-grid"></div>
+  </main>
+
+  <script src="mock-data.js"></script>
+  <script src="static.js"></script>
+  <script>StaticUI.initHome();</script>
+</body>
+</html>

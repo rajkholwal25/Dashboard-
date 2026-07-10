@@ -1,0 +1,14 @@
+services:
+  dashboard:
+    build: .
+    image: machine-live-dashboard:latest
+    container_name: Dashboard
+    ports:
+      - "3002:3002"
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3002
+      COMPLETED_JOBS_LIMIT: 0
+    restart: unless-stopped

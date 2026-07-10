@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Department — VK Global Digital</title>
+  <link rel="stylesheet" href="/styles.css?v=9">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <img src="/images/vk-logo.png" alt="VK Global Digital" class="brand-logo">
+        <div>
+          <h1 id="dept-title">Department</h1>
+          <p class="subtitle" id="dept-subtitle">Machines</p>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <span class="live-pill"><span class="live-dot"></span> Live</span>
+        <span id="status-banner" class="status-banner hidden"></span>
+        <span class="sync-time" id="last-updated">Loading…</span>
+        <button type="button" id="btn-status" class="btn btn-ghost" title="Check SAP &amp; DB status">Status</button>
+        <button type="button" id="btn-refresh" class="btn btn-ghost">↻ Refresh</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="page">
+    <div id="loading" class="loading-banner">Fetching live data from SAP…</div>
+    <div id="error-state" class="error-state hidden"></div>
+
+    <nav class="breadcrumb">
+      <a href="/">Departments</a>
+      <span class="sep">›</span>
+      <span id="breadcrumb-dept">Department</span>
+    </nav>
+
+    <div class="dept-kpi-strip" id="dept-kpi"></div>
+
+    <div class="toolbar">
+      <div class="search-box">
+        <span>🔍</span>
+        <input type="search" id="search" placeholder="Search machine…" autocomplete="off">
+      </div>
+    </div>
+
+    <div class="shift-grid" id="machine-grid"></div>
+  </main>
+
+  <script src="/app.js?v=10"></script>
+  <script>DashboardApp.initDepartment();</script>
+</body>
+</html>

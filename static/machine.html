@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Yong Shun (Lamination) — UI Preview</title>
+  <link rel="stylesheet" href="static.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="brand-icon">M</div>
+        <div>
+          <h1 id="page-title">Machine Detail</h1>
+          <p>Job history</p>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <span class="live-pill"><span class="live-dot"></span> Live</span>
+        <span class="sync-time" id="sync-time">Updated: —</span>
+        <button class="btn btn-ghost" type="button">↻ Refresh</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="page">
+    <div class="static-banner">UI Preview with your machine photos — mock data only</div>
+
+    <img id="machine-hero-img" class="machine-hero-image hidden" alt="">
+
+    <nav class="breadcrumb">
+      <a href="index.html">Dashboard</a>
+      <span class="sep">›</span>
+      <span id="breadcrumb-name">Machine</span>
+    </nav>
+
+    <section class="running-hero idle-state" id="running-hero">
+      <div class="running-hero-header">
+        <h2 id="hero-title">⏸ No job currently running</h2>
+        <span class="elapsed hidden" id="elapsed">Elapsed: 2h 15m</span>
+      </div>
+      <div class="detail-grid" id="running-grid"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Completed Jobs History</h2>
+        <span class="row-badge" id="row-count">0 rows</span>
+      </div>
+
+      <div class="date-filter-bar">
+        <div class="date-field">
+          <label for="detail-from">From</label>
+          <input type="date" id="detail-from" value="2026-07-02">
+        </div>
+        <div class="date-field">
+          <label for="detail-to">To</label>
+          <input type="date" id="detail-to" value="2026-07-09">
+        </div>
+        <button type="button" class="btn btn-primary" id="btn-apply">Apply Filter</button>
+      </div>
+
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>S.No</th>
+              <th>Start</th>
+              <th>End</th>
+              <th>Duration</th>
+              <th>Operator</th>
+              <th>Job No</th>
+              <th>FG Code</th>
+              <th>Description</th>
+              <th>Batch</th>
+              <th>Qty</th>
+            </tr>
+          </thead>
+          <tbody id="jobs-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="mock-data.js"></script>
+  <script src="static.js"></script>
+  <script>StaticUI.initDetail();</script>
+</body>
+</html>

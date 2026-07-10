@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Machine Detail — VK Global Digital</title>
+  <link rel="stylesheet" href="/styles.css?v=8">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <img src="/images/vk-logo.png" alt="VK Global Digital" class="brand-logo">
+        <div>
+          <h1 id="machine-title">Machine</h1>
+          <p class="subtitle" id="machine-subtitle">Job history</p>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <span class="live-pill"><span class="live-dot"></span> Live</span>
+        <span id="status-banner" class="status-banner hidden"></span>
+        <span class="sync-time" id="last-updated">Loading…</span>
+        <button type="button" id="btn-status" class="btn btn-ghost" title="Check SAP &amp; DB status">Status</button>
+        <button type="button" id="btn-refresh" class="btn btn-ghost">↻ Refresh</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="page">
+    <div id="loading" class="loading-banner">Loading machine data…</div>
+    <div id="error-state" class="error-state hidden"></div>
+
+    <nav class="breadcrumb">
+      <a href="/">Departments</a>
+      <span class="sep">›</span>
+      <a href="#" id="breadcrumb-dept">Department</a>
+      <span class="sep">›</span>
+      <span id="breadcrumb-name">Machine</span>
+    </nav>
+
+    <img id="machine-hero-img" class="machine-hero-image hidden" alt="">
+
+    <section id="current-job-panel" class="running-hero idle-state hidden">
+      <div class="running-hero-header">
+        <h2 id="hero-title">⏸ No job currently running</h2>
+        <span class="elapsed hidden" id="elapsed-timer"></span>
+      </div>
+      <div class="detail-grid" id="current-job-content"></div>
+    </section>
+
+    <section id="idle-panel" class="panel panel-idle hidden">
+      <p class="idle-message">No job currently running on this machine</p>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Completed Jobs History</h2>
+        <span class="row-badge" id="completed-count"></span>
+      </div>
+
+      <div class="completed-filter panel-filter">
+        <p class="filter-hint">Filter completed jobs by date range</p>
+        <div class="detail-filter-row">
+          <div class="date-field">
+            <label for="detail-from">From</label>
+            <input type="date" class="date-input" id="detail-from">
+          </div>
+          <div class="date-field">
+            <label for="detail-to">To</label>
+            <input type="date" class="date-input" id="detail-to">
+          </div>
+          <button type="button" id="btn-apply-filter" class="btn btn-primary">Apply Filter</button>
+        </div>
+        <p id="filter-range-label" class="filter-range-label"></p>
+      </div>
+
+      <div class="table-scroll">
+        <table class="data-table" id="completed-table">
+          <thead>
+            <tr>
+              <th>S.No</th>
+              <th>Start</th>
+              <th>End</th>
+              <th>Duration</th>
+              <th>MR</th>
+              <th>Operator</th>
+              <th>Job No</th>
+              <th>FG Code</th>
+              <th>Description</th>
+              <th>Batch</th>
+              <th>Qty</th>
+            </tr>
+          </thead>
+          <tbody id="completed-tbody"></tbody>
+        </table>
+        <p id="no-completed" class="empty-message hidden">No completed jobs in the selected date range.</p>
+      </div>
+    </section>
+  </main>
+
+  <div id="status-popover" class="status-popover hidden" role="dialog" aria-label="Connection status">
+    <div class="status-popover-head">
+      <strong>Connection Status</strong>
+      <button type="button" id="status-popover-close" class="status-popover-close" aria-label="Close">×</button>
+    </div>
+    <div id="status-popover-body" class="status-popover-body">Checking…</div>
+  </div>
+
+  <script src="/app.js?v=11"></script>
+  <script>DashboardApp.initMachineDetail();</script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VK Global Digital — Machine Live Dashboard</title>
+  <link rel="stylesheet" href="/styles.css?v=8">
+</head>
+<body class="home-page">
+  <header class="hero-header">
+    <div class="hero-inner">
+      <img src="/images/vk-logo.png" alt="VK Global Digital" class="vk-logo">
+      <h1 class="hero-title">VK Global Digital</h1>
+      <div class="hero-meta">
+        <span class="live-pill"><span class="live-dot"></span> Live</span>
+        <span id="status-banner" class="status-banner hidden"></span>
+        <span class="sync-time" id="last-updated">Loading…</span>
+        <button type="button" id="btn-status" class="btn btn-ghost btn-compact" title="Check SAP &amp; DB status">Status</button>
+        <button type="button" id="btn-refresh" class="btn btn-ghost btn-compact">↻ Refresh</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="page home-main">
+    <div id="loading" class="loading-banner hidden">Fetching live data from SAP…</div>
+    <div id="error-state" class="error-state hidden"></div>
+
+    <h2 class="section-title">Departments</h2>
+    <div class="dept-grid" id="dept-grid"></div>
+  </main>
+
+  <script src="/app.js?v=8"></script>
+  <script>DashboardApp.initHome();</script>
+</body>
+</html>
