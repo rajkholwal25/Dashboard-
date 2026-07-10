@@ -413,7 +413,92 @@ async function resolveOperatorContext(conn, identifiers, statusRow) {
   return { operator, loginTime, operatorSource };
 }
 
-function buildLivePayload(machineId, statusRow, operatorCtx, durations) {
+const EXPECTED_ACTIVITY_MIN_MINUTES = 10;
+
+/**
+ * Walk newest → oldest for same fg + activity (any machine).
+ * Use a row only when activity_time_minutes > 10 (and optional extra checks).
+ * Blank only when no qualifying past row exists (first-time / unique FG).
+ */
+async function fetchQualifiedActivityRow(conn, fgNum, activityName, { requireQty = false } = {}) {
+  const fg = fgNum != null ? String(fgNum).trim() : '';
+  if (!fg) return null;
+
+  const [rows] = await conn.execute(
+    `
+      SELECT
+        activity_time_minutes,
+        quantity_processed,
+        job_end_time,
+        job_start_time,
+        date_of_entry,
+        machine_name,
+        fg_num
+      FROM production_records
+      WHERE LOWER(TRIM(fg_num)) = LOWER(?)
+        AND LOWER(TRIM(activity_name)) = ?
+        AND activity_time_minutes IS NOT NULL
+        AND activity_time_minutes > 0
+      ORDER BY COALESCE(job_end_time, job_start_time, date_of_entry) DESC
+      LIMIT 200
+    `,
+    [fg, String(activityName).toLowerCase()],
+  );
+
+  // Walk back: last run → previous → older, until activity_time > 10 (and qty if needed)
+  for (const row of rows) {
+    const minutes = Number(row.activity_time_minutes);
+    if (!Number.isFinite(minutes) || minutes <= EXPECTED_ACTIVITY_MIN_MINUTES) continue;
+    if (requireQty) {
+      const qty = Number(row.quantity_processed);
+      if (!Number.isFinite(qty) || qty <= 0) continue;
+    }
+    return row;
+  }
+
+  return null;
+}
+
+/**
+ * Expected make-ready = walk back same fg makeready rows until > 10 min.
+ */
+async function fetchExpectedMakereadyMinutes(conn, fgNum) {
+  const row = await fetchQualifiedActivityRow(conn, fgNum, 'makeready');
+  if (!row) return null;
+  const minutes = Number(row.activity_time_minutes);
+  return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
+}
+
+/**
+ * Expected running = walk back same fg running rows until > 10 min
+ * with quantity_processed > 0, then:
+ * (activity_time_minutes / quantity_processed) × planned_qty
+ */
+async function fetchExpectedRunningMinutes(conn, fgNum, plannedQty) {
+  const planned = Number(plannedQty);
+  if (!Number.isFinite(planned) || planned <= 0) return null;
+
+  const row = await fetchQualifiedActivityRow(conn, fgNum, 'running', {
+    requireQty: true,
+  });
+  if (!row) return null;
+
+  const activityMinutes = Number(row.activity_time_minutes);
+  const qty = Number(row.quantity_processed);
+  if (!Number.isFinite(activityMinutes) || activityMinutes <= 0) return null;
+  if (!Number.isFinite(qty) || qty <= 0) return null;
+
+  return (activityMinutes / qty) * planned;
+}
+
+function buildLivePayload(
+  machineId,
+  statusRow,
+  operatorCtx,
+  durations,
+  expectedRunningMinutes = null,
+  expectedMakereadyMinutes = null,
+) {
   const machine = getMachineById(machineId);
   const ui = deriveUiStatus(statusRow);
   const jobActive = hasActiveJob(statusRow);
@@ -424,6 +509,12 @@ function buildLivePayload(machineId, statusRow, operatorCtx, durations) {
   const startTime = statusRow?.job_loaded_at ? formatDbDateTimeIST(statusRow.job_loaded_at) : null;
   const mrElapsed = durations?.makeready > 0 ? formatDurationFromSeconds(durations.makeready) : null;
   const runElapsed = durations?.running > 0 ? formatDurationFromSeconds(durations.running) : null;
+  const expectedRunning = expectedRunningMinutes != null && expectedRunningMinutes > 0
+    ? formatDurationMinutes(expectedRunningMinutes)
+    : '—';
+  const expectedMr = expectedMakereadyMinutes != null && expectedMakereadyMinutes > 0
+    ? formatDurationMinutes(expectedMakereadyMinutes)
+    : '—';
 
   return {
     found: !!statusRow,
@@ -440,8 +531,8 @@ function buildLivePayload(machineId, statusRow, operatorCtx, durations) {
     fgCode: statusRow?.current_fg_num || null,
     plannedQty: statusRow?.job_planned_qty != null ? statusRow.job_planned_qty : null,
     startTime,
-    expectedMr: '—',
-    expectedRunning: '—',
+    expectedMr,
+    expectedRunning,
     expectedEnd: '—',
     timeRemaining: '—',
     makereadyElapsed: mrElapsed,
@@ -485,7 +576,40 @@ async function fetchLiveStatusForMachines(machineIds) {
         const durations = jobActive && statusRow?.current_job_po
           ? await fetchJobStateDurations(conn, identifiers, statusRow.current_job_po)
           : { makeready: 0, running: 0 };
-        result.set(machineId, buildLivePayload(machineId, statusRow, operatorCtx, durations));
+        let expectedRunningMinutes = null;
+        let expectedMakereadyMinutes = null;
+        if (jobActive && statusRow?.current_fg_num) {
+          try {
+            expectedMakereadyMinutes = await fetchExpectedMakereadyMinutes(
+              conn,
+              statusRow.current_fg_num,
+            );
+          } catch (err) {
+            console.warn(`Expected make-ready time unavailable for ${machineId}:`, err.message);
+          }
+          if (statusRow?.job_planned_qty != null) {
+            try {
+              expectedRunningMinutes = await fetchExpectedRunningMinutes(
+                conn,
+                statusRow.current_fg_num,
+                statusRow.job_planned_qty,
+              );
+            } catch (err) {
+              console.warn(`Expected running time unavailable for ${machineId}:`, err.message);
+            }
+          }
+        }
+        result.set(
+          machineId,
+          buildLivePayload(
+            machineId,
+            statusRow,
+            operatorCtx,
+            durations,
+            expectedRunningMinutes,
+            expectedMakereadyMinutes,
+          ),
+        );
       }
     });
   } catch (err) {
@@ -501,9 +625,16 @@ async function fetchLiveStatusForMachines(machineIds) {
 
 function formatDurationMinutes(minutes) {
   if (minutes == null || minutes < 0) return '—';
-  const h = Math.floor(minutes / 60);
-  const m = Math.round(minutes % 60);
+  const total = Number(minutes);
+  if (!Number.isFinite(total) || total <= 0) return '—';
+  const h = Math.floor(total / 60);
+  const m = Math.round(total % 60);
   if (h > 0) return `${h}h ${m}m`;
+  // Keep sub-minute values visible in minutes (e.g. 0.1m), never seconds
+  if (total > 0 && m === 0) {
+    const rounded = Math.round(total * 10) / 10;
+    return `${rounded}m`;
+  }
   return `${m}m`;
 }
 

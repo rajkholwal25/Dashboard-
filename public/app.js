@@ -337,8 +337,8 @@ const DashboardApp = (() => {
     const jobText = live.runningJob
       ? (live.jobName ? `${live.runningJob} — ${live.jobName}` : live.runningJob)
       : '—';
-    const mrDisplay = live.makereadyElapsed || live.expectedMr || '—';
-    const runDisplay = live.runningElapsed || live.expectedRunning || '—';
+    const mrDisplay = live.expectedMr || '—';
+    const runDisplay = live.expectedRunning || '—';
 
     return `
       <article class="shift-card" data-id="${esc(m.id)}" id="shift-${esc(m.id)}">
