@@ -491,6 +491,36 @@ async function fetchExpectedRunningMinutes(conn, fgNum, plannedQty) {
   return (activityMinutes / qty) * planned;
 }
 
+function computeExpectedEndAndRemaining(jobLoadedAt, expectedMrMin, expectedRunMin) {
+  const start = wallClockToISTDate(jobLoadedAt);
+  const mr = expectedMrMin != null && expectedMrMin > 0 ? Number(expectedMrMin) : null;
+  const run = expectedRunMin != null && expectedRunMin > 0 ? Number(expectedRunMin) : null;
+
+  if (!start) return { expectedEnd: '—', timeRemaining: '—' };
+  if (mr == null && run == null) return { expectedEnd: '—', timeRemaining: '—' };
+
+  const totalMinutes = (mr || 0) + (run || 0);
+  if (totalMinutes <= 0) return { expectedEnd: '—', timeRemaining: '—' };
+
+  const endDate = new Date(start.getTime() + totalMinutes * 60 * 1000);
+  const expectedEnd = new Intl.DateTimeFormat('en-IN', {
+    timeZone: REPORT_TIMEZONE,
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(endDate);
+
+  const remainingMinutes = (endDate.getTime() - Date.now()) / 60000;
+  const timeRemaining = remainingMinutes <= 0
+    ? 'Overdue'
+    : formatDurationMinutes(remainingMinutes);
+
+  return { expectedEnd, timeRemaining };
+}
+
 function buildLivePayload(
   machineId,
   statusRow,
@@ -515,6 +545,13 @@ function buildLivePayload(
   const expectedMr = expectedMakereadyMinutes != null && expectedMakereadyMinutes > 0
     ? formatDurationMinutes(expectedMakereadyMinutes)
     : '—';
+  const { expectedEnd, timeRemaining } = jobActive
+    ? computeExpectedEndAndRemaining(
+      statusRow?.job_loaded_at,
+      expectedMakereadyMinutes,
+      expectedRunningMinutes,
+    )
+    : { expectedEnd: '—', timeRemaining: '—' };
 
   return {
     found: !!statusRow,
@@ -533,8 +570,8 @@ function buildLivePayload(
     startTime,
     expectedMr,
     expectedRunning,
-    expectedEnd: '—',
-    timeRemaining: '—',
+    expectedEnd,
+    timeRemaining,
     makereadyElapsed: mrElapsed,
     runningElapsed: runElapsed,
     jobLoadedAtISO: mysqlDateTimeToISO(statusRow?.job_loaded_at),
