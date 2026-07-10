@@ -90,6 +90,30 @@ app.get('/api/departments/:deptId/live', async (req, res) => {
   });
 });
 
+app.get('/api/machines/live', async (_req, res) => {
+  const machineIds = machineList.map((m) => m.id);
+  const liveMap = await fetchLiveStatusForMachines(machineIds);
+  const database = await checkDatabaseConnection();
+
+  res.json({
+    generatedAt: new Date().toISOString(),
+    databaseAvailable: database.ok,
+    databaseError: database.ok ? null : database.message,
+    machines: machineIds.map((id) => {
+      const m = machineList.find((x) => x.id === id);
+      const live = liveMap.get(id) || null;
+      const isActive = live?.status === 'running' || live?.status === 'makeready';
+      return {
+        id,
+        name: m?.name || id,
+        status: isActive ? 'running' : 'idle',
+        live,
+      };
+    }),
+    refreshMs: CACHE_TTL_MS,
+  });
+});
+
 app.get('/api/machines/list', (_req, res) => {
   res.json({
     machines: machineList.map((m) => {
@@ -136,7 +160,9 @@ app.get('/api/machines/:machineId', async (req, res) => {
     console.error(`GET /api/machines/${req.params.machineId} error:`, err.message);
     res.status(status).json({
       error: err.message,
-      sapAvailable: false,
+      databaseAvailable: false,
+      databaseError: err.message,
+      jobHistorySource: 'database',
     });
   }
 });

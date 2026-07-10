@@ -47,33 +47,58 @@ function resolveDashboardMachineId(row) {
     || null;
 }
 
-function formatDbDateTimeIST(value) {
-  if (!value) return null;
-  try {
-    const d = value instanceof Date ? value : new Date(value);
-    if (Number.isNaN(d.getTime())) return String(value);
-    return new Intl.DateTimeFormat('en-IN', {
-      timeZone: REPORT_TIMEZONE,
-      year: 'numeric',
-      month: 'short',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
-    }).format(d);
-  } catch {
-    return String(value);
+/**
+ * MySQL DATETIME values are stored as IST wall-clock (no timezone).
+ * mysql2 Date objects treat those digits as UTC/local and Intl + Asia/Kolkata
+ * shifts them again (+5:30). Always parse the clock digits directly.
+ */
+function extractMysqlWallClock(value) {
+  if (value == null) return null;
+
+  if (typeof value === 'string') {
+    const m = value.trim().match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+    if (!m) return null;
+    return { ymd: m[1], hour: m[2], minute: m[3], second: m[4] || '00' };
   }
+
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const pad = (n) => String(n).padStart(2, '0');
+    return {
+      ymd: `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`,
+      hour: pad(value.getHours()),
+      minute: pad(value.getMinutes()),
+      second: pad(value.getSeconds()),
+    };
+  }
+
+  return null;
+}
+
+function wallClockToISTDate(value) {
+  const parts = extractMysqlWallClock(value);
+  if (!parts) return null;
+  const d = new Date(`${parts.ymd}T${parts.hour}:${parts.minute}:${parts.second}+05:30`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function formatDbDateTimeIST(value, { hour12 = true } = {}) {
+  const istDate = wallClockToISTDate(value);
+  if (!istDate) return value != null ? String(value) : null;
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: REPORT_TIMEZONE,
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12,
+  }).format(istDate);
 }
 
 function mysqlDateTimeToISO(value) {
-  if (!value) return null;
-  const raw = value instanceof Date
-    ? `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')} ${String(value.getHours()).padStart(2, '0')}:${String(value.getMinutes()).padStart(2, '0')}:${String(value.getSeconds()).padStart(2, '0')}`
-    : String(value).trim();
-  const m = raw.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
-  if (!m) return null;
-  return `${m[1]}T${m[2]}:${m[3]}:${m[4] || '00'}+05:30`;
+  const parts = extractMysqlWallClock(value);
+  if (!parts) return null;
+  return `${parts.ymd}T${parts.hour}:${parts.minute}:${parts.second}+05:30`;
 }
 
 function formatDurationFromSeconds(seconds) {
@@ -474,9 +499,92 @@ async function fetchLiveStatusForMachines(machineIds) {
   return result;
 }
 
+function formatDurationMinutes(minutes) {
+  if (minutes == null || minutes < 0) return '—';
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function durationMinutesBetween(start, end) {
+  const startIso = mysqlDateTimeToISO(start);
+  const endIso = mysqlDateTimeToISO(end);
+  if (!startIso || !endIso) return null;
+  const diff = Math.round((new Date(endIso) - new Date(startIso)) / 60000);
+  return diff >= 0 ? diff : null;
+}
+
+function mapProductionRecordRow(row) {
+  const makereadyMinutes = parseFloat(row.makeready_minutes) || 0;
+  const durationMinutes = durationMinutesBetween(row.job_start_time, row.job_end_time);
+  const wallClock = extractMysqlWallClock(row.job_end_time);
+
+  return {
+    jobNo: row.po_num != null ? String(row.po_num).trim() : '',
+    fgCode: row.fg_num != null ? String(row.fg_num).trim() : '',
+    description: row.job_name != null ? String(row.job_name).trim() : '',
+    operator: row.operator_name != null ? String(row.operator_name).trim() : '',
+    batchNo: row.batch_num != null ? String(row.batch_num).trim() : '',
+    startTime: formatDbDateTimeIST(row.job_start_time, { hour12: false }),
+    endTime: formatDbDateTimeIST(row.job_end_time, { hour12: false }),
+    startTimeISO: mysqlDateTimeToISO(row.job_start_time),
+    endTimeISO: mysqlDateTimeToISO(row.job_end_time),
+    endSortKey: wallClock ? `${wallClock.ymd} ${wallClock.hour}:${wallClock.minute}` : '0000-00-00 00:00',
+    duration: formatDurationMinutes(durationMinutes),
+    durationMinutes,
+    makeReady: makereadyMinutes > 0 ? formatDurationMinutes(makereadyMinutes) : '—',
+    makeReadySeconds: makereadyMinutes > 0 ? Math.round(makereadyMinutes * 60) : null,
+    completedQty: row.completed_qty != null && Number(row.completed_qty) > 0
+      ? Number(row.completed_qty)
+      : null,
+    qtyLabel: 'qty',
+    fromDatabase: true,
+  };
+}
+
+/**
+ * Completed job history from production_records (grouped by batch).
+ */
+async function fetchCompletedJobsFromDb(machineId, startDate, endDate) {
+  const machineNames = getMachineNames(machineId);
+  if (!machineNames.length) return [];
+
+  return withConnection(async (conn) => {
+    const placeholders = machineNames.map(() => '?').join(', ');
+    const query = `
+      SELECT
+        batch_num,
+        MAX(po_num) AS po_num,
+        MAX(fg_num) AS fg_num,
+        MAX(job_name) AS job_name,
+        MAX(operator_name) AS operator_name,
+        MIN(job_start_time) AS job_start_time,
+        MAX(job_end_time) AS job_end_time,
+        SUM(CASE WHEN LOWER(activity_name) = 'makeready' THEN COALESCE(activity_time_minutes, 0) ELSE 0 END) AS makeready_minutes,
+        COALESCE(
+          NULLIF(SUM(CASE WHEN LOWER(activity_name) = 'production' THEN COALESCE(quantity_processed, 0) ELSE 0 END), 0),
+          MAX(quantity_processed)
+        ) AS completed_qty
+      FROM production_records
+      WHERE machine_name IN (${placeholders})
+        AND job_start_time >= ?
+        AND job_start_time < DATE_ADD(?, INTERVAL 1 DAY)
+        AND job_end_time IS NOT NULL
+      GROUP BY batch_num
+      HAVING batch_num IS NOT NULL AND TRIM(batch_num) != ''
+      ORDER BY job_end_time DESC
+    `;
+    const params = [...machineNames, `${startDate} 00:00:00`, endDate];
+    const [rows] = await conn.execute(query, params);
+    return rows.map(mapProductionRecordRow);
+  });
+}
+
 module.exports = {
   checkDatabaseConnection,
   fetchMakeReadyByJob,
   fetchLiveStatusForMachines,
+  fetchCompletedJobsFromDb,
   withConnection,
 };

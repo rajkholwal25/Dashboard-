@@ -22,14 +22,20 @@
   </header>
 
   <main class="page home-main">
-    <div id="loading" class="loading-banner hidden">Fetching live data from SAP…</div>
+    <div id="loading" class="loading-banner hidden">Loading live status from database…</div>
     <div id="error-state" class="error-state hidden"></div>
 
-    <h2 class="section-title">Departments</h2>
-    <div class="dept-grid" id="dept-grid"></div>
+    <div class="toolbar">
+      <div class="search-box">
+        <span>🔍</span>
+        <input type="search" id="search" placeholder="Search machine…" autocomplete="off">
+      </div>
+    </div>
+
+    <div id="home-departments" class="home-departments"></div>
   </main>
 
-  <script src="/app.js?v=8"></script>
+  <script src="/app.js?v=12"></script>
   <script>DashboardApp.initHome();</script>
 </body>
 </html>

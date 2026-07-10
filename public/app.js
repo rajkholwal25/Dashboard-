@@ -87,6 +87,20 @@ const DashboardApp = (() => {
   function showSapBanner(data) {
     const banner = document.getElementById('status-banner');
     if (!banner) return;
+    if (data.jobHistorySource === 'database') {
+      if (data.databaseAvailable === false) {
+        banner.textContent = data.databaseError ? `DB: ${data.databaseError}` : 'Database unavailable';
+        banner.className = 'status-banner error';
+        banner.classList.remove('hidden');
+      } else if (data.stale) {
+        banner.textContent = 'Cached data — database refresh failed';
+        banner.className = 'status-banner warning';
+        banner.classList.remove('hidden');
+      } else {
+        banner.classList.add('hidden');
+      }
+      return;
+    }
     if (!data.sapAvailable) {
       banner.textContent = data.sapError ? `SAP: ${data.sapError}` : 'SAP unavailable';
       banner.className = 'status-banner error';
@@ -181,10 +195,15 @@ const DashboardApp = (() => {
     });
   }
 
+  function isActiveMachine(m) {
+    const s = m.live?.status || m.status;
+    return s === 'running' || s === 'makeready';
+  }
+
   function getDeptStats(dept) {
     const ids = new Set(dept.machines.map((m) => m.id));
     const machines = lastMachines.filter((m) => ids.has(m.id));
-    const running = machines.filter((m) => m.status === 'running').length;
+    const running = machines.filter(isActiveMachine).length;
     return { total: dept.machines.length, running, loaded: machines.length };
   }
 
@@ -214,6 +233,68 @@ const DashboardApp = (() => {
     `;
   }
 
+  function getDeptLiveMachines(dept) {
+    const liveById = new Map(lastMachines.map((m) => [m.id, m]));
+    return dept.machines.map((m) => {
+      const row = liveById.get(m.id);
+      return {
+        id: m.id,
+        name: m.name,
+        image: m.image || getImage(m.id),
+        status: row?.status || 'idle',
+        live: row?.live || {
+          status: 'idle',
+          stateLabel: lastMachines.length ? 'Idle' : 'Loading…',
+        },
+      };
+    });
+  }
+
+  function filterHomeMachines(machine) {
+    const q = (document.getElementById('search')?.value || '').toLowerCase();
+    if (!q) return true;
+    return machine.name.toLowerCase().includes(q) || machine.id.toLowerCase().includes(q);
+  }
+
+  function renderHomeDeptSection(dept, machines) {
+    return `
+      <section class="home-dept-section" style="--dept-color: ${esc(dept.color)}">
+        <div class="home-dept-head">
+          <div class="home-dept-title-wrap">
+            <span class="home-dept-icon">${dept.icon || '🏭'}</span>
+            <div>
+              <h2 class="home-dept-title">${esc(dept.name)}</h2>
+              <p class="home-dept-status">${renderDeptStatus(dept)}</p>
+            </div>
+          </div>
+          <a class="home-dept-link" href="/department/${esc(dept.id)}">View department →</a>
+        </div>
+        <div class="shift-grid">
+          ${machines.map((m) => renderShiftCard(m)).join('')}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderHomeGrouped() {
+    const root = document.getElementById('home-departments');
+    if (!root) return;
+
+    const sections = departments
+      .map((dept) => {
+        if (!dept.machineCount) return '';
+        const machines = getDeptLiveMachines(dept).filter(filterHomeMachines);
+        if (!machines.length) return '';
+        return renderHomeDeptSection(dept, machines);
+      })
+      .filter(Boolean);
+
+    root.innerHTML = sections.length
+      ? sections.join('')
+      : '<p class="empty-message">No machines match your search.</p>';
+    bindShiftCardActions();
+  }
+
   function renderDeptGrid() {
     const grid = document.getElementById('dept-grid');
     if (!grid) return;
@@ -234,7 +315,7 @@ const DashboardApp = (() => {
 
   function showDbBanner(available, message) {
     const banner = document.getElementById('status-banner');
-    if (!banner || activeDeptId == null) return;
+    if (!banner) return;
     if (!available) {
       banner.textContent = message ? `DB: ${message}` : 'Database unavailable';
       banner.className = 'status-banner warning';
@@ -295,12 +376,6 @@ const DashboardApp = (() => {
       btn.onclick = (e) => {
         e.stopPropagation();
         window.location.href = `/machine/${btn.dataset.id}`;
-      };
-    });
-    document.querySelectorAll('.shift-card').forEach((card) => {
-      card.onclick = (e) => {
-        if (e.target.closest('button')) return;
-        window.location.href = `/machine/${card.dataset.id}`;
       };
     });
   }
@@ -520,6 +595,30 @@ const DashboardApp = (() => {
     }
   }
 
+  async function fetchHomeLive() {
+    const loading = document.getElementById('loading');
+    const errorState = document.getElementById('error-state');
+    try {
+      if (loading) loading.classList.remove('hidden');
+      const res = await fetch('/api/machines/live');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.databaseError || data.error || `HTTP ${res.status}`);
+      if (data.refreshMs) refreshMs = data.refreshMs;
+      lastMachines = data.machines || [];
+      if (loading) loading.classList.add('hidden');
+      if (errorState) errorState.classList.add('hidden');
+      updateLastUpdated(data.generatedAt);
+      showDbBanner(data.databaseAvailable !== false, data.databaseError);
+      renderHomeGrouped();
+    } catch (err) {
+      if (loading) loading.classList.add('hidden');
+      if (errorState) {
+        errorState.classList.remove('hidden');
+        errorState.textContent = `Failed to load: ${err.message}`;
+      }
+    }
+  }
+
   async function fetchMachines(forceRefresh = false) {
     const loading = document.getElementById('loading');
     const errorState = document.getElementById('error-state');
@@ -557,17 +656,21 @@ const DashboardApp = (() => {
 
   async function initHome() {
     bindStatusButton();
-    document.getElementById('btn-refresh')?.addEventListener('click', () => fetchMachines(true));
+    const loadingEl = document.getElementById('loading');
+    if (loadingEl) loadingEl.textContent = 'Loading live status from database…';
+    document.getElementById('btn-refresh')?.addEventListener('click', () => fetchHomeLive());
+    document.getElementById('search')?.addEventListener('input', () => renderHomeGrouped());
     try {
       await loadDepartments();
-      renderDeptGrid();
+      await loadMachineCatalog();
+      renderHomeGrouped();
       updateLastUpdated(new Date().toISOString());
     } catch (err) {
       const errorState = document.getElementById('error-state');
       if (errorState) { errorState.classList.remove('hidden'); errorState.textContent = err.message; }
     }
-    fetchMachines(false);
-    scheduleRefresh(() => fetchMachines(false));
+    fetchHomeLive();
+    scheduleRefresh(() => fetchHomeLive());
   }
 
   function getDeptIdFromPath() {

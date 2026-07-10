@@ -2,7 +2,7 @@ const mysql = require('mysql2/promise');
 const { getDbConfig } = require('../config/db');
 const { machines, getMachineById, getMachineNames } = require('../config/machines');
 const sapService = require('./sapService');
-const { fetchMakeReadyByJob } = require('./dbService');
+const { fetchMakeReadyByJob, fetchCompletedJobsFromDb } = require('./dbService');
 
 const REPORT_TIMEZONE = process.env.REPORT_TIMEZONE || 'Asia/Kolkata';
 const CACHE_TTL_MS = Number(process.env.DASHBOARD_REFRESH_MS || 30000);
@@ -437,6 +437,23 @@ function buildMachineSummaries(byMachine) {
   });
 }
 
+async function loadMachineJobHistory(machineId, { startDate, endDate } = {}) {
+  const range = resolveDateRange(startDate, endDate);
+  const completedJobs = await fetchCompletedJobsFromDb(machineId, range.startDate, range.endDate);
+  const limitedJobs = COMPLETED_JOBS_LIMIT > 0
+    ? completedJobs.slice(0, COMPLETED_JOBS_LIMIT)
+    : completedJobs;
+
+  return {
+    classified: {
+      currentJob: null,
+      completedJobs: limitedJobs,
+      lastCompletedAt: limitedJobs[0]?.endTimeISO || null,
+    },
+    range,
+  };
+}
+
 async function getMachineDetail(machineId, { forceRefresh = false, startDate, endDate } = {}) {
   const machine = getMachineById(machineId);
   if (!machine) {
@@ -445,39 +462,34 @@ async function getMachineDetail(machineId, { forceRefresh = false, startDate, en
     throw err;
   }
 
-  if (startDate || endDate || forceRefresh) {
-    const range = resolveDateRange(startDate, endDate);
-    return refreshMachine(machineId, range);
-  }
-
-  const dashboard = await getDashboardData({ forceRefresh: false });
+  const range = resolveDateRange(startDate, endDate);
   const cached = cache.machines.get(machineId);
-  const classified = cached?.data || null;
+  const sameRange = cached?.dateRange?.startDate === range.startDate
+    && cached?.dateRange?.endDate === range.endDate;
 
-  if (!classified && dashboard.sapAvailable) {
-    return {
-      machine: { id: machine.id, name: machine.name },
-      currentJob: null,
-      completedJobs: [],
-      sapAvailable: dashboard.sapAvailable,
-      sapError: dashboard.sapError,
-      generatedAt: dashboard.generatedAt,
-      timezone: dashboard.timezone,
-      refreshMs: CACHE_TTL_MS,
-    };
+  if (!forceRefresh && cached?.data && sameRange && Date.now() - cached.at < CACHE_TTL_MS) {
+    return buildMachineResponse(machine, cached.data, range);
   }
 
-  return {
-    machine: { id: machine.id, name: machine.name },
-    currentJob: classified?.currentJob || null,
-    completedJobs: classified?.completedJobs || [],
-    sapAvailable: dashboard.sapAvailable,
-    sapError: dashboard.sapError,
-    generatedAt: dashboard.generatedAt,
-    timezone: dashboard.timezone,
-    refreshMs: CACHE_TTL_MS,
-    stale: dashboard.stale || false,
-  };
+  try {
+    const { classified } = await loadMachineJobHistory(machineId, range);
+    cache.machines.set(machineId, { at: Date.now(), data: classified, dateRange: range });
+    return buildMachineResponse(machine, classified, range);
+  } catch (err) {
+    console.error(`Job history DB fetch error for ${machineId}:`, err.message);
+    const dbError = err.message || 'Failed to fetch job history from database';
+    if (cached?.data && sameRange) {
+      return {
+        ...buildMachineResponse(machine, cached.data, range),
+        databaseAvailable: false,
+        databaseError: dbError,
+        stale: true,
+      };
+    }
+    const error = new Error(dbError);
+    error.statusCode = 503;
+    throw error;
+  }
 }
 
 function resolveDateRange(from, to) {
@@ -520,8 +532,9 @@ function buildMachineResponse(machine, classified, { startDate, endDate } = {}) 
     currentJob,
     completedJobs,
     dateRange: { startDate, endDate },
-    sapAvailable: true,
-    sapError: null,
+    jobHistorySource: 'database',
+    databaseAvailable: true,
+    databaseError: null,
     generatedAt: new Date().toISOString(),
     timezone: REPORT_TIMEZONE,
     refreshMs: CACHE_TTL_MS,
@@ -529,49 +542,7 @@ function buildMachineResponse(machine, classified, { startDate, endDate } = {}) 
 }
 
 async function refreshMachine(machineId, { startDate, endDate } = {}) {
-  const machine = getMachineById(machineId);
-  if (!machine) {
-    const err = new Error(`Unknown machine: ${machineId}`);
-    err.statusCode = 404;
-    throw err;
-  }
-
-  const completedRange = resolveDateRange(startDate, endDate);
-  const runningRange = {
-    startDate: addCalendarDays(formatDateYmd(), -BATCH_LOOKBACK_DAYS),
-    endDate: formatDateYmd(),
-  };
-  const enrichStart =
-    completedRange.startDate < runningRange.startDate ? completedRange.startDate : runningRange.startDate;
-
-  await sapService.ensureSapSession();
-  sapService.clearLastSapError();
-
-  const [completedBatches, runningBatches, enrichment, mysqlSupplement, makeReadyMap] = await Promise.all([
-    sapService.fetchMachineBatches(completedRange.startDate, completedRange.endDate, machineId),
-    sapService.fetchMachineBatches(runningRange.startDate, runningRange.endDate, machineId),
-    fetchEnrichmentData(enrichStart, runningRange.endDate),
-    fetchMysqlSupplement(machineId, completedRange.startDate, completedRange.endDate),
-    fetchMakeReadyByJob(machineId, completedRange.startDate, completedRange.endDate),
-  ]);
-
-  const runningData = classifyBatches(runningBatches, enrichment, mysqlSupplement, makeReadyMap);
-  const completedData = classifyBatches(completedBatches, enrichment, mysqlSupplement, makeReadyMap);
-
-  const classified = {
-    currentJob: runningData.currentJob,
-    completedJobs: completedData.completedJobs,
-    lastCompletedAt: completedData.lastCompletedAt,
-  };
-
-  cache.machines.set(machineId, { at: Date.now(), data: classified, dateRange: completedRange });
-
-  if (cache.all.data?.byMachine) {
-    cache.all.data.byMachine.set(machineId, classified);
-    cache.all.at = Date.now();
-  }
-
-  return buildMachineResponse(machine, classified, completedRange);
+  return getMachineDetail(machineId, { forceRefresh: true, startDate, endDate });
 }
 
 function clearCache() {

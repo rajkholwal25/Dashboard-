@@ -8,6 +8,8 @@ function getDbConfig() {
     user: process.env.DB_USER || process.env.MYSQL_USER || 'root',
     password: process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || '',
     database: process.env.DB_NAME || process.env.MYSQL_DATABASE || 'sap',
+    // Keep MySQL DATETIME as plain strings — values are IST wall-clock, not UTC instants.
+    dateStrings: true,
   };
 }
 
