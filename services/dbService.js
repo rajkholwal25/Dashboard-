@@ -1,6 +1,7 @@
 const mysql = require('mysql2/promise');
 const { getDbConfig } = require('../config/db');
 const { machines, getMachineNames, getMachineById } = require('../config/machines');
+const sapService = require('./sapService');
 
 const REPORT_TIMEZONE = process.env.REPORT_TIMEZONE || 'Asia/Kolkata';
 
@@ -528,6 +529,7 @@ function buildLivePayload(
   durations,
   expectedRunningMinutes = null,
   expectedMakereadyMinutes = null,
+  sapJobNo = null,
 ) {
   const machine = getMachineById(machineId);
   const ui = deriveUiStatus(statusRow);
@@ -564,6 +566,7 @@ function buildLivePayload(
     loginTime,
     operatorSource: jobActive ? (operatorCtx?.operatorSource || null) : null,
     runningJob: statusRow?.current_job_po || null,
+    sapJobNo: sapJobNo || null,
     jobName: statusRow?.current_job_name || null,
     fgCode: statusRow?.current_fg_num || null,
     plannedQty: statusRow?.job_planned_qty != null ? statusRow.job_planned_qty : null,
@@ -647,6 +650,24 @@ async function fetchLiveStatusForMachines(machineIds) {
             expectedMakereadyMinutes,
           ),
         );
+      }
+
+      const activePos = [];
+      for (const live of result.values()) {
+        if (live?.hasActiveJob && live.runningJob) activePos.push(live.runningJob);
+      }
+      if (activePos.length) {
+        try {
+          const jobNoByPo = await sapService.fetchJobNumbersByProductionOrders(activePos);
+          for (const [id, live] of result.entries()) {
+            if (!live?.hasActiveJob || !live.runningJob) continue;
+            const poKey = String(live.runningJob).trim();
+            const sapJobNo = jobNoByPo.has(poKey) ? jobNoByPo.get(poKey) : null;
+            result.set(id, { ...live, sapJobNo: sapJobNo || null });
+          }
+        } catch (err) {
+          console.warn('SAP job number enrichment failed:', err.message);
+        }
       }
     });
   } catch (err) {

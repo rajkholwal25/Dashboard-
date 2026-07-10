@@ -242,6 +242,14 @@ async function fetchProductionOrders(poAbsoluteEntries) {
   return prodOrderMap;
 }
 
+function pickSapJobNumber(job) {
+  if (!job || typeof job !== 'object') return null;
+  // Job number lives in U_VerEntry — never fall back to DocNum/DocEntry (those are internal keys).
+  const raw = job.U_VerEntry ?? job.u_VerEntry ?? job.U_VERENTRY;
+  if (raw == null || String(raw).trim() === '') return null;
+  return String(raw).trim();
+}
+
 async function fetchJobs(jobEntries) {
   const jobMap = new Map();
   if (!jobEntries.size) return jobMap;
@@ -253,7 +261,9 @@ async function fetchJobs(jobEntries) {
     const batch = jobArray.slice(i, i + jobBatchSize);
     const results = await mapPool(batch, (docEntry) =>
       sapClient
-        .get(`/OMJD(${docEntry})`)
+        .get(`/OMJD(${docEntry})`, {
+          params: { $select: 'DocEntry,DocNum,U_VerEntry' },
+        })
         .then((r) => r.data)
         .catch(() => null),
     );
@@ -261,12 +271,104 @@ async function fetchJobs(jobEntries) {
     for (const job of results) {
       if (!job) continue;
       jobMap.set(job.DocEntry, {
-        docNum: job.U_VerEntry ?? job.DocNum,
+        docNum: pickSapJobNumber(job),
       });
     }
   }
 
   return jobMap;
+}
+
+const jobNumberByPoCache = new Map();
+const JOB_NUMBER_CACHE_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * Resolve SAP Job Number from Production Order DocumentNumber:
+ * PO DocumentNumber → latest AbsoluteEntry (greatest DocEntry) → U_JobEnt → OMJD → U_VerEntry
+ */
+async function fetchJobNumberByProductionOrder(poNumber) {
+  const po = String(poNumber ?? '').trim();
+  if (!po) return null;
+
+  const cached = jobNumberByPoCache.get(po);
+  if (cached && Date.now() - cached.at < JOB_NUMBER_CACHE_TTL_MS) {
+    return cached.jobNo;
+  }
+
+  const numericPo = Number(po);
+  const filter = Number.isFinite(numericPo) && String(numericPo) === po
+    ? `DocumentNumber eq ${numericPo}`
+    : `DocumentNumber eq '${po.replace(/'/g, "''")}'`;
+
+  let rows = [];
+  try {
+    const resp = await sapClient.get('/ProductionOrders', {
+      params: {
+        $filter: filter,
+        $select: 'DocumentNumber,U_JobEnt,AbsoluteEntry',
+        $orderby: 'AbsoluteEntry desc',
+      },
+      headers: { Prefer: 'odata.maxpagesize=50' },
+    });
+    rows = resp?.data?.value || [];
+  } catch (err) {
+    throw new Error(formatSapError(err, 'SAP ProductionOrders'));
+  }
+
+  if (!rows.length) {
+    jobNumberByPoCache.set(po, { jobNo: null, at: Date.now() });
+    return null;
+  }
+
+  // Same DocumentNumber can exist on multiple POs — always use greatest AbsoluteEntry (latest).
+  const poRow = rows.reduce((best, row) => {
+    const entry = Number(row?.AbsoluteEntry);
+    const bestEntry = Number(best?.AbsoluteEntry);
+    if (!Number.isFinite(entry)) return best;
+    if (!best || !Number.isFinite(bestEntry) || entry > bestEntry) return row;
+    return best;
+  }, null);
+
+  const jobEnt = poRow?.U_JobEnt != null ? parseInt(poRow.U_JobEnt, 10) : NaN;
+  if (!Number.isFinite(jobEnt) || jobEnt <= 0) {
+    jobNumberByPoCache.set(po, { jobNo: null, at: Date.now() });
+    return null;
+  }
+
+  let jobNo = null;
+  try {
+    const job = await sapClient
+      .get(`/OMJD(${jobEnt})`, {
+        params: { $select: 'DocEntry,DocNum,U_VerEntry' },
+      })
+      .then((r) => r.data);
+    jobNo = pickSapJobNumber(job);
+  } catch (err) {
+    throw new Error(formatSapError(err, 'SAP OMJD'));
+  }
+
+  jobNumberByPoCache.set(po, { jobNo, at: Date.now() });
+  return jobNo;
+}
+
+async function fetchJobNumbersByProductionOrders(poNumbers) {
+  const unique = [...new Set(
+    (poNumbers || []).map((p) => String(p ?? '').trim()).filter(Boolean),
+  )];
+  const map = new Map();
+  if (!unique.length) return map;
+
+  await ensureSapSession();
+  await mapPool(unique, async (po) => {
+    try {
+      map.set(po, await fetchJobNumberByProductionOrder(po));
+    } catch (err) {
+      console.warn(`SAP job number lookup failed for PO ${po}:`, err.message);
+      map.set(po, null);
+    }
+  }, 4);
+
+  return map;
 }
 
 module.exports = {
@@ -276,6 +378,8 @@ module.exports = {
   fetchInventoryGenEntriesDetails,
   fetchProductionOrders,
   fetchJobs,
+  fetchJobNumberByProductionOrder,
+  fetchJobNumbersByProductionOrders,
   normalizeBatchNumber,
   getLastSapError,
   clearLastSapError,

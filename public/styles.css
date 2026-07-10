@@ -812,7 +812,7 @@ a { color: inherit; text-decoration: none; }
 
 .shift-job-row {
   display: grid;
-  grid-template-columns: 1.4fr 0.8fr;
+  grid-template-columns: 1.3fr 0.7fr 0.7fr;
   gap: 0.65rem;
   padding: 0.85rem 1.1rem 0.65rem;
 }
@@ -869,6 +869,7 @@ a { color: inherit; text-decoration: none; }
 
 @media (max-width: 760px) {
   .shift-grid { grid-template-columns: 1fr; }
+  .shift-job-row { grid-template-columns: 1fr; }
   .shift-time-grid { grid-template-columns: 1fr 1fr; }
   .shift-time-grid .shift-meta-box:nth-child(5) { grid-column: span 2; }
 }

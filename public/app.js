@@ -353,7 +353,8 @@ const DashboardApp = (() => {
         </div>` : ''}
         <img class="shift-card-photo" src="${esc(img)}" alt="${esc(m.name)}" loading="lazy">
         <div class="shift-job-row">
-          ${shiftMeta('Running Job', jobText)}
+          ${shiftMeta('Production No', jobText)}
+          ${shiftMeta('Job No', live.sapJobNo || '—')}
           ${shiftMeta('Planned Qty', live.plannedQty != null ? String(live.plannedQty) : '—')}
         </div>
         <div class="shift-time-grid">
@@ -774,6 +775,7 @@ const DashboardApp = (() => {
     if (!live?.hasActiveJob) return null;
     return {
       jobNo: live.runningJob,
+      sapJobNo: live.sapJobNo || null,
       fgCode: live.fgCode,
       description: live.jobName,
       operator: live.operator,
@@ -827,7 +829,8 @@ const DashboardApp = (() => {
     if (job.fromDatabase) {
       heroContent.innerHTML = `
         <div class="detail-item"><div class="lbl">Status</div><div class="val">${esc(stateLabel)}</div></div>
-        <div class="detail-item"><div class="lbl">Job No</div><div class="val">${esc(job.jobNo || '—')}</div></div>
+        <div class="detail-item"><div class="lbl">Production No</div><div class="val">${esc(job.jobNo || '—')}</div></div>
+        <div class="detail-item"><div class="lbl">Job No</div><div class="val">${esc(job.sapJobNo || live?.sapJobNo || '—')}</div></div>
         <div class="detail-item"><div class="lbl">FG Code</div><div class="val">${esc(job.fgCode || '—')}</div></div>
         <div class="detail-item"><div class="lbl">Description</div><div class="val">${esc(job.description || '—')}</div></div>
         <div class="detail-item"><div class="lbl">Operator</div><div class="val">${esc(job.operator || '—')}</div></div>
@@ -840,7 +843,7 @@ const DashboardApp = (() => {
     }
 
     heroContent.innerHTML = `
-      <div class="detail-item"><div class="lbl">Job No</div><div class="val">${esc(job.jobNo || '—')}</div></div>
+      <div class="detail-item"><div class="lbl">Production No</div><div class="val">${esc(job.jobNo || '—')}</div></div>
       <div class="detail-item"><div class="lbl">FG Code</div><div class="val">${esc(job.fgCode || '—')}</div></div>
       <div class="detail-item"><div class="lbl">Description</div><div class="val">${esc(job.description || '—')}</div></div>
       <div class="detail-item"><div class="lbl">Operator</div><div class="val">${esc(job.operator || '—')}</div></div>
